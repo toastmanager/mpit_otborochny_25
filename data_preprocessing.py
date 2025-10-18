@@ -7,9 +7,9 @@ def save_data(df: pd.DataFrame, output_path: str) -> None:
     df.to_csv(output_path, index=False)
 
 
-def add_smart_attributes(df: pd.DataFrame) -> pd.DataFrame:
+def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Adds new features to the DataFrame based on existing data.
+    Adds new features to the DataFrame and removes old features based on existing data.
 
     These new features can help improve the performance of machine learning models.
     """
@@ -55,7 +55,15 @@ def add_smart_attributes(df: pd.DataFrame) -> pd.DataFrame:
         median_experience
     )
 
-    df.drop(columns=["order_datetime", "driver_reg_datetime"], inplace=True)
+    # Логарифмирование признака distance_in_meters, чтобы сгладить его распределение
+    # Добавляем +1 (псевдосчет), чтобы избежать ошибки логарифмирования нуля
+    if "distance_in_meters" in df.columns:
+        df["distance_in_meters_log"] = np.log1p(df["distance_in_meters"])
+
+    df.drop(
+        columns=["order_datetime", "driver_reg_datetime", "distance_in_meters"],
+        inplace=True,
+    )
     return df
 
 
@@ -116,7 +124,7 @@ def preprocess_data(file_path: str) -> pd.DataFrame:
     if "Unnamed: 18" in df.columns:
         df.drop("Unnamed: 18", axis=1, inplace=True)
 
-    df = add_smart_attributes(df)
+    df = feature_engineering(df)
     df = remove_leaky_attributes(df)
     df = handle_anomalies(df)
 

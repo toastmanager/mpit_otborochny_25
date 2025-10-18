@@ -12,34 +12,13 @@ from typing import Dict, Any
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
-def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Применяет инжиниринг признаков к датафрейму.
-    - Логарифмирует асимметричные признаки для нормализации распределения.
-    - Создает новые признаки для улучшения предсказательной силы модели.
-    """
-    # Логарифмирование признака distance_in_meters, чтобы сгладить его распределение
-    # Добавляем +1 (псевдосчет), чтобы избежать ошибки логарифмирования нуля
-    if "distance_in_meters" in df.columns:
-        df["distance_in_meters_log"] = np.log1p(df["distance_in_meters"])
-
-    # --- Сюда можно добавлять другие преобразования признаков ---
-    # Например, создание полиномиальных признаков или комбинаций
-    # df['price_per_km'] = df['price_start_local'] / (df['distance_in_meters'] / 1000)
-
-    return df
-
-
 def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
     """
     Организует полный пайплайн: инжиниринг признаков, подбор гиперпараметров,
     обучение и оценка модели.
     """
-    # 1. Инжиниринг признаков
-    df = feature_engineering(df)
-
     # Исключаем исходный столбец дистанции, так как мы используем его логарифм
-    columns_to_drop = ["is_done", "distance_in_meters"]
+    columns_to_drop = ["is_done"]
     categorical_features = ["carmodel", "carname", "platform"]
 
     X = df.drop(columns=columns_to_drop, errors="ignore")
