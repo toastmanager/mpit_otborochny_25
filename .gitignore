@@ -1,5 +1,6 @@
 visualizations/
 models/
+__pycache__/
 catboost_info
 catboost_predictor.joblib
 data_processed.csv

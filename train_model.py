@@ -15,7 +15,7 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 # --- Контрольные параметры ---
 # Поставьте True, чтобы загрузить существующее исследование и пропустить оптимизацию.
 # Поставьте False, чтобы запустить новый подбор гиперпараметров.
-USE_EXISTING_STUDY = False
+USE_EXISTING_STUDY = True
 STUDY_PATH = "models/optuna_study.joblib"
 # --------------------------------
 
@@ -33,7 +33,7 @@ def train_pipeline(
     """
     # ... (код подготовки данных остается без изменений)
     columns_to_drop = ["is_done"]
-    categorical_features = ["carmodel", "carname", "platform"]
+    categorical_features = ["platform"]
 
     X = df.drop(columns=columns_to_drop, errors="ignore")
     y = df["is_done"]

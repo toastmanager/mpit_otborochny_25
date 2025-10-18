@@ -1,24 +1,21 @@
-import pandas as pd
-import numpy as np
-import joblib
-from typing import Dict
 import warnings
+from typing import Dict, Tuple
+
+import joblib
+import numpy as np
+import pandas as pd
 
 warnings.filterwarnings("ignore")
 
 
-class PriceOptimizer:
+class ServicePriceOptimizer:
     def __init__(
         self,
         model_path: str = "models/final_model.joblib",
         feature_names_path: str = "models/feature_names.joblib",
     ):
         """
-        Инициализация оптимизатора цен
-
-        Args:
-            model_path: путь к обученной модели
-            feature_names_path: путь к файлу с именами признаков
+        Финальная версия оптимизатора цен для сервиса такси
         """
         try:
             self.model = joblib.load(model_path)
@@ -28,23 +25,31 @@ class PriceOptimizer:
             print("❌ Ошибка: файлы модели не найдены. Запустите обучение сначала.")
             raise
 
-        # Настройки цен
-        self.PRICE_STEP = 10  # Уменьшили шаг до 10 рублей
+        # Оптимизированные настройки на основе анализа
+        self.PRICE_STEP = 10
+        self.SERVICE_COST_PER_KM = 8
+        self.SERVICE_MARGIN_MIN = 0.20
+        self.MIN_PRICE_PER_KM = 15
+        self.MAX_PRICE_PER_KM = 45
+        self.BASE_PRICE = 120
 
     def prepare_features(
-        self, carmodel: str, carname: str, platform: str, distance: float, price: float
+        self,
+        carmodel: str,
+        carname: str,
+        platform: str,
+        distance: float,
+        price: float,
+        order_hour: int = 12,
+        driver_rating: float = 4.8,
     ) -> pd.DataFrame:
         """
-        Подготовка признаков для модели
+        Подготовка признаков только с теми данными, которые есть в датасете
         """
-        # Проверяем корректность платформы
         if platform not in ["ios", "android"]:
-            print(
-                f"⚠️  Платформа '{platform}' не 'ios' или 'android'. Используем 'ios' по умолчанию."
-            )
             platform = "ios"
 
-        # Создаем базовые фичи
+        # Используем только те признаки, которые были при обучении
         features = {
             "carmodel": carmodel,
             "carname": carname,
@@ -52,34 +57,27 @@ class PriceOptimizer:
             "distance": distance,
             "price": price,
             "price_per_km": price / distance if distance > 0 else 0,
-        }
-
-        # Добавляем недостающие фичи с значениями по умолчанию
-        additional_features = {
-            "duration_in_seconds": 1800,  # 30 минут по умолчанию
-            "driver_rating": 4.8,  # высокий рейтинг
-            "pickup_in_meters": 500,  # 500 метров до подачи
-            "pickup_in_seconds": 300,  # 5 минут до подачи
-            "price_start_local": price * 0.8,  # стартовая цена на 20% ниже
-            "price_bid_local": price,  # текущая ставка
-            "order_hour": 12,  # полдень
-            "order_dayofweek": 1,  # понедельник
-            "is_night": 0,  # не ночь
+            "duration_in_seconds": distance * 180 + 300,  # 3 мин/км + 5 мин подачи
+            "driver_rating": driver_rating,
+            "pickup_in_meters": 500,
+            "pickup_in_seconds": 300,
+            "price_start_local": max(price * 0.7, self.BASE_PRICE),
+            "price_bid_local": price,
+            "order_hour": order_hour,
+            "order_dayofweek": 1,
+            "is_night": 1 if 22 <= order_hour <= 23 or 0 <= order_hour <= 5 else 0,
             "price_per_meter": price / (distance * 1000) if distance > 0 else 0,
-            "price_per_second": price / 1800 if distance > 0 else 0,
-            "price_increase_abs": price * 0.2,  # увеличение цены на 20%
-            "price_increase_perc": 20.0,  # 20% увеличение
-            "driver_experience_days": 365,  # 1 год опыта
+            "price_per_second": price / (distance * 180 + 300) if distance > 0 else 0,
+            "price_increase_abs": price * 0.2,
+            "price_increase_perc": 20.0,
+            "driver_experience_days": 365,
             "distance_in_meters_log": np.log(distance * 1000) if distance > 0 else 0,
         }
 
-        # Объединяем все фичи
-        all_features = {**features, **additional_features}
-
         # Создаем DataFrame
-        df = pd.DataFrame([all_features])
+        df = pd.DataFrame([features])
 
-        # Обработка редких категорий
+        # Обработка категориальных признаков
         categorical_features = ["carmodel", "carname", "platform"]
         for col in categorical_features:
             if col in df.columns:
@@ -90,166 +88,241 @@ class PriceOptimizer:
                     df[col] = "Other"
                 df[col] = df[col].astype(str)
 
-        # Убеждаемся, что все признаки в правильном порядке и есть все нужные колонки
+        # Убеждаемся, что все признаки в правильном порядке
         for feature in self.feature_names:
             if feature not in df.columns:
-                df[feature] = 0  # добавляем недостающие колонки
+                df[feature] = 0
 
         return df[self.feature_names]
 
     def predict_success_probability(self, features: pd.DataFrame) -> float:
-        """
-        Предсказание вероятности успешного завершения поездки
-        """
+        """Предсказание вероятности успеха"""
         try:
-            # Предсказываем вероятность класса 1 (успешная поездка)
-            probability = self.model.predict_proba(features)[0, 1]
-            return probability
+            return self.model.predict_proba(features)[0, 1]
         except Exception as e:
             print(f"❌ Ошибка при предсказании: {e}")
             return 0.0
 
-    def calculate_expected_value(self, price: float, success_prob: float) -> float:
-        """
-        Расчет ожидаемого дохода: цена × вероятность успеха
-        """
-        return price * success_prob
+    def calculate_realistic_price_range(self, distance: float) -> Tuple[float, float]:
+        """Расчет реалистичного диапазона цен"""
+        min_price = max(self.BASE_PRICE, distance * self.MIN_PRICE_PER_KM)
+        max_price = distance * self.MAX_PRICE_PER_KM
+        return min_price, max_price
 
-    def find_optimal_price(
+    def calculate_service_profit(
+        self, price: float, success_prob: float, distance: float
+    ) -> Dict:
+        """Расчет прибыли сервиса"""
+        service_cost = distance * self.SERVICE_COST_PER_KM + 80
+        gross_profit = price - service_cost
+        expected_profit = gross_profit * success_prob
+        margin = gross_profit / price if price > 0 else 0
+
+        return {
+            "price": price,
+            "service_cost": service_cost,
+            "gross_profit": gross_profit,
+            "expected_profit": expected_profit,
+            "margin": margin,
+            "success_probability": success_prob,
+            "price_per_km": price / distance if distance > 0 else 0,
+        }
+
+    def find_optimal_service_price(
         self,
         carmodel: str,
         carname: str,
         platform: str,
         distance: float,
-        proposed_price: float,
+        base_price: float,
+        order_hour: int = 12,
+        driver_rating: float = 4.8,
     ) -> Dict:
         """
-        Поиск оптимальной цены для максимизации ожидаемого дохода
-
-        Returns:
-            Словарь с рекомендациями
+        Поиск оптимальной цены с использованием только существующих признаков
         """
-        print(
-            f"🔍 Анализ заказа: {carmodel} {carname}, {distance} км, платформа: {platform}"
-        )
-        print(f"💡 Предложенная цена: {proposed_price} руб.")
+        print(f"🔍 Анализ заказа: {carmodel} {carname}, {distance} км")
+        print(f"💡 Базовая цена: {base_price} руб.")
+        print(f"🕒 Время заказа: {order_hour}:00, Рейтинг водителя: {driver_rating}")
 
-        results = []
+        # Рассчитываем реалистичный диапазон
+        min_price, max_price = self.calculate_realistic_price_range(distance)
 
-        # Генерируем цены от предложенной до +300 рублей с шагом 10
-        min_test_price = proposed_price
-        max_test_price = proposed_price + 300
+        # Корректируем базовую цену если нужно
+        adjusted_base = max(min_price, min(base_price, max_price))
+        if adjusted_base != base_price:
+            print(f"📝 Скорректированная базовая цена: {adjusted_base} руб.")
+            base_price = adjusted_base
 
-        test_prices = np.arange(
-            min_test_price, max_test_price + self.PRICE_STEP, self.PRICE_STEP
-        )
+        print(f"📊 Диапазон цен: {min_price:.0f} - {max_price:.0f} руб.")
+        print(f"   ({self.MIN_PRICE_PER_KM} - {self.MAX_PRICE_PER_KM} руб./км)")
 
-        # Добавляем предложенную цену если ее нет в списке (на всякий случай)
-        if proposed_price not in test_prices:
-            test_prices = np.append(test_prices, proposed_price)
+        # Умный подбор диапазона тестирования
+        test_min = max(min_price, base_price - 50)
+        test_max = min(max_price, base_price + 100)
 
+        test_prices = np.arange(test_min, test_max + self.PRICE_STEP, self.PRICE_STEP)
+        if base_price not in test_prices:
+            test_prices = np.append(test_prices, base_price)
         test_prices = np.sort(test_prices)
 
         print(
-            f"📊 Тестируем цены от {min_test_price} до {max_test_price} руб. (шаг: {self.PRICE_STEP} руб.)"
+            f"🔎 Тестируем {len(test_prices)} цен от {test_min:.0f} до {test_max:.0f} руб."
         )
 
+        results = []
         for price in test_prices:
             features = self.prepare_features(
-                carmodel, carname, platform, distance, price
+                carmodel, carname, platform, distance, price, order_hour, driver_rating
             )
             success_prob = self.predict_success_probability(features)
-            expected_value = self.calculate_expected_value(price, success_prob)
+            profit_data = self.calculate_service_profit(price, success_prob, distance)
+            results.append(profit_data)
 
-            results.append(
-                {
-                    "price": price,
-                    "success_probability": success_prob,
-                    "expected_value": expected_value,
-                }
-            )
+        if not results:
+            return {}
 
-        # Сортируем по ожидаемому доходу
-        results.sort(key=lambda x: x["expected_value"], reverse=True)
-
+        # Сортируем по ожидаемой прибыли
+        results.sort(key=lambda x: x["expected_profit"], reverse=True)
+        base_option = next(r for r in results if r["price"] == base_price)
         best_option = results[0]
-        proposed_option = next(r for r in results if r["price"] == proposed_price)
+
+        # Находим вариант с минимальной маржой
+        min_margin_options = [
+            r for r in results if r["margin"] >= self.SERVICE_MARGIN_MIN
+        ]
+        min_margin_option = min_margin_options[0] if min_margin_options else base_option
 
         recommendation = {
-            "proposed_price": {
-                "price": proposed_price,
-                "success_probability": proposed_option["success_probability"],
-                "expected_value": proposed_option["expected_value"],
-            },
-            "recommended_price": {
-                "price": best_option["price"],
-                "success_probability": best_option["success_probability"],
-                "expected_value": best_option["expected_value"],
-            },
+            "base_price": base_option,
+            "optimal_price": best_option,
+            "min_margin_price": min_margin_option,
+            "all_options": results[:6],
+            "service_cost": base_option["service_cost"],
+            "min_margin": self.SERVICE_MARGIN_MIN,
         }
 
         return recommendation
 
     def print_recommendation(self, recommendation: Dict):
-        """
-        Красивый вывод рекомендации
-        """
-        prop = recommendation["proposed_price"]
-        rec = recommendation["recommended_price"]
+        """Четкий вывод рекомендаций"""
+        if not recommendation:
+            print("❌ Нет данных для рекомендации")
+            return
+
+        base = recommendation["base_price"]
+        optimal = recommendation["optimal_price"]
+        min_margin = recommendation["min_margin_price"]
 
         print("\n" + "=" * 60)
-        print("💰 РЕКОМЕНДАЦИЯ ПО ЦЕНООБРАЗОВАНИЮ")
+        print("💰 ФИНАЛЬНЫЕ РЕКОМЕНДАЦИИ ДЛЯ СЕРВИСА")
         print("=" * 60)
 
-        print(f"📊 Предложенная цена: {prop['price']:.0f} руб.")
-        print(f"   Вероятность успеха: {prop['success_probability']:.1%}")
-        print(f"   Ожидаемый доход: {prop['expected_value']:.0f} руб.")
+        improvement = optimal["expected_profit"] - base["expected_profit"]
 
-        print(f"🎯 Рекомендуемая цена: {rec['price']:.0f} руб.")
-        print(f"   Вероятность успеха: {rec['success_probability']:.1%}")
-        print(f"   Ожидаемый доход: {rec['expected_value']:.0f} руб.")
-
-        improvement = rec["expected_value"] - prop["expected_value"]
-        price_difference = rec["price"] - prop["price"]
-
-        if improvement > 0:
+        # Основная рекомендация
+        if improvement > 5:  # Значительное улучшение
+            print(f"🎯 РЕКОМЕНДАЦИЯ: Увеличить цену до {optimal['price']:.0f} руб.")
             print(
-                f"📈 Увеличение дохода: +{improvement:.0f} руб. ({improvement / prop['expected_value']:+.1%})"
+                f"   📈 Прибыль вырастет на +{improvement:.0f} руб. ({improvement / base['expected_profit']:+.0%})"
             )
-            print(f"💸 Наценка: +{price_difference:.0f} руб.")
+        elif improvement < -5:  # Ухудшение
+            print(f"🎯 РЕКОМЕНДАЦИЯ: Снизить цену до {optimal['price']:.0f} руб.")
+            print(f"   📉 Потери сократятся на {abs(improvement):.0f} руб.")
         else:
-            print(f"📉 Ухудшение дохода: {improvement:.0f} руб.")
+            print(f"🎯 РЕКОМЕНДАЦИЯ: Оставить цену {base['price']:.0f} руб.")
+            print("   ✅ Текущая цена близка к оптимальной")
+
+        print("\n📊 ДЕТАЛИ РЕКОМЕНДАЦИИ:")
+        print(
+            f"   • Цена: {optimal['price']:.0f} руб. ({optimal['price_per_km']:.1f} руб./км)"
+        )
+        print(f"   • Вероятность успеха: {optimal['success_probability']:.1%}")
+        print(f"   • Ожидаемая прибыль: {optimal['expected_profit']:.0f} руб.")
+        print(f"   • Маржа: {optimal['margin']:.1%}")
+        print(f"   • Себестоимость: {recommendation['service_cost']:.0f} руб.")
+
+        # Показываем сравнение с текущей ценой
+        if optimal["price"] != base["price"]:
+            print("\n📈 СРАВНЕНИЕ С ТЕКУЩЕЙ ЦЕНОЙ:")
+            print(
+                f"   Текущая: {base['price']:.0f} руб. → {base['expected_profit']:.0f} руб. прибыли"
+            )
+            print(
+                f"   Рекомендуемая: {optimal['price']:.0f} руб. → {optimal['expected_profit']:.0f} руб. прибыли"
+            )
+
+        # Альтернативные варианты
+        if len(recommendation["all_options"]) > 1:
+            print("\n🏆 ЛУЧШИЕ ВАРИАНТЫ:")
+            for option in recommendation["all_options"]:
+                markers = []
+                if option["price"] == optimal["price"]:
+                    markers.append("РЕКОМЕНДУЕМ")
+                if (
+                    option["price"] == base["price"]
+                    and base["price"] != optimal["price"]
+                ):
+                    markers.append("ТЕКУЩАЯ")
+                if (
+                    option["price"] == min_margin["price"]
+                    and min_margin["price"] != optimal["price"]
+                ):
+                    markers.append("МИН.МАРЖА")
+
+                marker_str = " 👈 " + ", ".join(markers) if markers else ""
+                print(
+                    f"   {option['price']:4.0f}р | {option['expected_profit']:4.0f}р прибыли | {option['success_probability']:4.1%} шанс{marker_str}"
+                )
 
 
 def main():
-    """
-    Пример использования оптимизатора цен
-    """
+    """Демонстрация работы оптимизатора"""
     try:
-        optimizer = PriceOptimizer()
+        optimizer = ServicePriceOptimizer()
 
-        # Пример данных заказа
+        # Тестовые сценарии с разным временем суток
         test_orders = [
             {
                 "carmodel": "Toyota Camry",
                 "carname": "Camry 2.5",
-                "platform": "ios",  # Только ios или android
-                "distance": 15.5,
-                "proposed_price": 450,
+                "platform": "ios",
+                "distance": 8.5,
+                "base_price": 200,
+                "order_hour": 18,  # Вечер
+                "driver_rating": 4.9,
             },
             {
                 "carmodel": "Kia Rio",
                 "carname": "Rio Classic",
-                "platform": "android",  # Только ios или android
-                "distance": 8.2,
-                "proposed_price": 300,
+                "platform": "android",
+                "distance": 5.2,
+                "base_price": 150,
+                "order_hour": 10,  # Утро
+                "driver_rating": 4.7,
+            },
+            {
+                "carmodel": "Hyundai Solaris",
+                "carname": "Solaris 1.6",
+                "platform": "ios",
+                "distance": 12.0,
+                "base_price": 300,
+                "order_hour": 23,  # Ночь
+                "driver_rating": 4.8,
             },
         ]
 
-        for order in test_orders:
-            recommendation = optimizer.find_optimal_price(**order)
+        for i, order in enumerate(test_orders, 1):
+            print(f"\n{'#' * 60}")
+            print(f"📦 ЗАКАЗ #{i}")
+            print(f"{'#' * 60}")
+
+            recommendation = optimizer.find_optimal_service_price(**order)
             optimizer.print_recommendation(recommendation)
-            print("\n")
+
+        print(f"\n{'=' * 60}")
+        print("✅ АНАЛИЗ ЗАВЕРШЕН! Рекомендации готовы к использованию.")
+        print(f"{'=' * 60}")
 
     except Exception as e:
         print(f"❌ Ошибка: {e}")

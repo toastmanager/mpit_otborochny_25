@@ -53,7 +53,6 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         df["is_outcompeted"] = 0
 
     df = df[df["is_outcompeted"] == 0]
-    df.drop(columns=["is_outcompeted"], inplace=True)
 
     # Convert timestamp to datetime and extract time-based features
     df["order_datetime"] = pd.to_datetime(df["order_timestamp"], errors="coerce")
@@ -115,6 +114,8 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
         "order_timestamp",
         "driver_reg_date",
         "driver_id",
+        "carmodel",
+        "carname",
     ]
     df.drop(columns=[col for col in cols_to_drop if col in df.columns], inplace=True)
     return df
