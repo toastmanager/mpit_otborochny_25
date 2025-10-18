@@ -15,7 +15,7 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 # --- Контрольные параметры ---
 # Поставьте True, чтобы загрузить существующее исследование и пропустить оптимизацию.
 # Поставьте False, чтобы запустить новый подбор гиперпараметров.
-USE_EXISTING_STUDY = True
+USE_EXISTING_STUDY = False
 STUDY_PATH = "models/optuna_study.joblib"
 # --------------------------------
 
@@ -49,7 +49,9 @@ def train_pipeline(
     )
 
     try:
-        test_model = CatBoostClassifier(task_type="GPU", devices="0", verbose=0)
+        test_model = CatBoostClassifier(
+            task_type="GPU", devices="0", cat_features=categorical_features, verbose=0
+        )
         test_model.fit(X_train.head(10), y_train.head(10), verbose=0)
         task_type = "GPU"
         devices = "0"
@@ -165,7 +167,7 @@ if __name__ == "__main__":
 
     ### ИЗМЕНЕНИЕ 4: Передаем флаг и путь в функцию ###
     artifacts = train_pipeline(
-        df, n_trials=50, use_existing_study=USE_EXISTING_STUDY, study_path=STUDY_PATH
+        df, n_trials=40, use_existing_study=USE_EXISTING_STUDY, study_path=STUDY_PATH
     )
 
     duration = time.time() - start_time
