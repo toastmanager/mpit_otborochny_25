@@ -11,27 +11,39 @@ from typing import Dict, Any
 # Устанавливаем уровень логирования Optuna, чтобы избежать лишнего вывода
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
+### ИЗМЕНЕНИЕ 1: Добавляем контрольный флаг и путь к файлу исследования ###
+# --- Контрольные параметры ---
+# Поставьте True, чтобы загрузить существующее исследование и пропустить оптимизацию.
+# Поставьте False, чтобы запустить новый подбор гиперпараметров.
+USE_EXISTING_STUDY = False
+STUDY_PATH = "models/optuna_study.joblib"
+# --------------------------------
 
-def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
+
+def train_pipeline(
+    df: pd.DataFrame,
+    n_trials: int = 50,
+    ### ИЗМЕНЕНИЕ 2: Добавляем флаг и путь в аргументы функции ###
+    use_existing_study: bool = False,
+    study_path: str = "",
+) -> Dict[str, Any]:
     """
     Организует полный пайплайн: инжиниринг признаков, подбор гиперпараметров,
     обучение и оценка модели.
     """
-    # Исключаем исходный столбец дистанции, так как мы используем его логарифм
+    # ... (код подготовки данных остается без изменений)
     columns_to_drop = ["is_done"]
     categorical_features = ["carmodel", "carname", "platform"]
 
     X = df.drop(columns=columns_to_drop, errors="ignore")
     y = df["is_done"]
 
-    # 2. Обработка редких категорий
     for col in categorical_features:
         if col in X.columns:
             counts = X[col].value_counts()
             rare_categories = counts[counts < 10].index.tolist()
             X[col] = X[col].replace(rare_categories, "Other").astype(str)
 
-    # 3. Разделение данных (стратифицированное)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.20, random_state=42, stratify=y
     )
@@ -41,58 +53,70 @@ def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
         test_model.fit(X_train.head(10), y_train.head(10), verbose=0)
         task_type = "GPU"
         devices = "0"
+        print("Используется GPU")
     except Exception:
         task_type = "CPU"
         devices = None
+        print("Используется СPU")
 
-    # 4. Подбор гиперпараметров с Optuna
-    def objective(trial: optuna.Trial) -> float:
-        train_x, val_x, train_y, val_y = train_test_split(
-            X_train, y_train, test_size=0.25, random_state=42, stratify=y_train
+    ### ИЗМЕНЕНИЕ 3: Основной блок логики для переключения режимов ###
+    if use_existing_study and os.path.exists(study_path):
+        print(f"Загрузка существующего исследования Optuna из файла: {study_path}")
+        study = joblib.load(study_path)
+        best_params = study.best_params
+        # .get() используется для безопасности, если в старом файле нет этого атрибута
+        best_iteration = study.best_trial.user_attrs.get("best_iteration", 2000)
+        print("Исследование успешно загружено. Оптимизация будет пропущена.")
+    else:
+        if use_existing_study:
+            print(
+                f"Внимание: Файл исследования '{study_path}' не найден. Запускается новая оптимизация."
+            )
+        else:
+            print("Запуск нового исследования Optuna для подбора гиперпараметров...")
+
+        def objective(trial: optuna.Trial) -> float:
+            train_x, val_x, train_y, val_y = train_test_split(
+                X_train, y_train, test_size=0.25, random_state=42, stratify=y_train
+            )
+            params = {
+                "n_estimators": 2000,
+                "learning_rate": trial.suggest_float(
+                    "learning_rate", 0.01, 0.1, log=True
+                ),
+                "max_depth": trial.suggest_int("max_depth", 4, 9),
+                "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 15.0, log=True),
+                "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 100),
+                "random_state": 42,
+                "verbose": 0,
+                "task_type": task_type,
+                "cat_features": categorical_features,
+                "auto_class_weights": "Balanced",
+            }
+            if devices:
+                params["devices"] = devices
+            model = CatBoostClassifier(**params)
+            model.fit(
+                train_x,
+                train_y,
+                eval_set=[(val_x, val_y)],
+                early_stopping_rounds=70,
+                verbose=0,
+            )
+            preds = model.predict(val_x)
+            f1 = float(f1_score(val_y, preds, pos_label=1))
+            trial.set_user_attr("best_iteration", model.get_best_iteration())
+            return f1
+
+        study = optuna.create_study(
+            direction="maximize", study_name="catboost_f1_optimization"
         )
+        study.optimize(objective, n_trials=n_trials)
+        best_params = study.best_params
+        best_iteration = study.best_trial.user_attrs["best_iteration"]
 
-        # Расширенный и уточненный диапазон гиперпараметров
-        params = {
-            "n_estimators": 2000,  # Увеличиваем, чтобы early_stopping нашел лучший момент
-            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
-            "max_depth": trial.suggest_int("max_depth", 4, 9),
-            "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 15.0, log=True),
-            # "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-            # "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.6, 1.0),
-            "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 100),
-            "random_state": 42,
-            "verbose": 0,
-            "task_type": task_type,
-            "cat_features": categorical_features,
-            "auto_class_weights": "Balanced",  # Ключевой параметр для борьбы с дисбалансом
-        }
-
-        if devices:
-            params["devices"] = devices
-
-        model = CatBoostClassifier(**params)
-        model.fit(
-            train_x,
-            train_y,
-            eval_set=[(val_x, val_y)],
-            early_stopping_rounds=70,  # Увеличиваем для стабильности
-            verbose=0,
-        )
-
-        preds = model.predict(val_x)
-        f1 = float(f1_score(val_y, preds, pos_label=1))
-        trial.set_user_attr("best_iteration", model.get_best_iteration())
-        return f1
-
-    study = optuna.create_study(
-        direction="maximize", study_name="catboost_f1_optimization"
-    )
-    study.optimize(objective, n_trials=n_trials)
-
-    # 5. Обучение финальной модели на лучших параметрах
-    best_params = study.best_params
-    best_iteration = study.best_trial.user_attrs["best_iteration"]
-
+    # 5. Обучение финальной модели на лучших параметрах (этот блок выполняется в любом случае)
+    print("\nОбучение финальной модели на лучших параметрах...")
     final_model_params = best_params.copy()
     final_model_params.update(
         {
@@ -108,7 +132,7 @@ def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
         final_model_params["devices"] = devices
 
     final_model = CatBoostClassifier(**final_model_params)
-    final_model.fit(X_train, y_train, verbose=100)  # Можно включить вывод для контроля
+    final_model.fit(X_train, y_train, verbose=100)
 
     # 6. Сборка артефактов для возврата
     artifacts = {
@@ -117,7 +141,7 @@ def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
         "X_test": X_test,
         "y_test": y_test,
         "best_params": study.best_params,
-        "feature_names": X_train.columns.tolist(),  # Сохраняем порядок признаков
+        "feature_names": X_train.columns.tolist(),
     }
     return artifacts
 
@@ -133,24 +157,23 @@ if __name__ == "__main__":
     print(f"Старт обучения модели в {time.ctime()}")
     start_time = time.time()
 
+    ### ИЗМЕНЕНИЕ 4: Передаем флаг и путь в функцию ###
     artifacts = train_pipeline(
-        df, n_trials=50
-    )  # Для тестов можно ставить мало, для реального поиска 50-100
+        df, n_trials=50, use_existing_study=USE_EXISTING_STUDY, study_path=STUDY_PATH
+    )
 
     duration = time.time() - start_time
     print(f"Конец обучения модели в {time.ctime()}")
     print(f"Затрачено на обучение: {duration:.2f} сек.")
 
-    # Сохранение всех артефактов
+    # Сохранение всех артефактов (код без изменений)
     os.makedirs("models", exist_ok=True)
-
     joblib.dump(artifacts["model"], "models/final_model.joblib")
+    # Если мы не запускали новую оптимизацию, мы все равно сохраняем загруженное исследование.
+    # Это не повредит, но если хотите, можно добавить проверку.
     joblib.dump(artifacts["study"], "models/optuna_study.joblib")
-    joblib.dump(
-        artifacts["feature_names"], "models/feature_names.joblib"
-    )  # Сохраняем признаки
+    joblib.dump(artifacts["feature_names"], "models/feature_names.joblib")
 
-    # Сохраняем тестовые данные для воспроизводимости оценки
     test_df = artifacts["X_test"].copy()
     test_df["is_done"] = artifacts["y_test"]
     test_df.to_csv("models/test_data.csv", index=False)

@@ -17,6 +17,43 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     if df["is_done"].dtype == "object":
         df["is_done"] = df["is_done"].str.strip().map({"done": 1, "cancel": 0})
 
+    # Шаг 1: Для каждого order_id определяем, был ли он в итоге выполнен кем-либо.
+    # Используем .transform('any'), чтобы результат этого вычисления (True/False)
+    # был применен ко всем строкам, относящимся к одному и тому же order_id.
+    if "order_id" in df.columns:
+        df["order_was_completed"] = df.groupby("order_id")["is_done"].transform("any")
+
+        # Шаг 2: Определяем условия, когда предложение было "перебито" конкурентом.
+        # Условие A: Цена предложения была не выше начальной (хорошее предложение)
+        good_price_condition = df["price_bid_local"] <= df["price_start_local"]
+
+        # Условие B: Конкретно это предложение было отклонено (is_done == 0)
+        cancelled_condition = df["is_done"] == 0
+
+        # Условие C: Но сам заказ в итоге был выполнен (другим водителем)
+        completed_order_condition = df["order_was_completed"] == 1
+
+        # Комбинируем все три условия. Результат (True/False) преобразуем в 1/0.
+        df["is_outcompeted"] = (
+            good_price_condition & cancelled_condition & completed_order_condition
+        ).astype(int)
+
+        # Удаляем вспомогательную колонку, она больше не нужна
+        df.drop(columns=["order_was_completed"], inplace=True)
+
+        outcompeted_count = df["is_outcompeted"].sum()
+        print(
+            f"Identified {outcompeted_count} instances of being outcompeted by another driver."
+        )
+    else:
+        print(
+            "Warning: 'order_id' column not found. Cannot create 'is_outcompeted' feature."
+        )
+        # Создаем колонку с нулями, чтобы не ломать дальнейший код
+        df["is_outcompeted"] = 0
+
+    # --- КОНЕЦ БЛОКА ДЛЯ ВСТАВКИ ---
+
     # Convert timestamp to datetime and extract time-based features
     df["order_datetime"] = pd.to_datetime(df["order_timestamp"], errors="coerce")
     df["order_hour"] = df["order_datetime"].dt.hour

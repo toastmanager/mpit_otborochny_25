@@ -20,6 +20,8 @@
 - order_dayofweek
 - is_night
 
+- is_outcompeted
+
 ## Удалённые переменные
 
 - is_done - целевая колонна
