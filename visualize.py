@@ -6,7 +6,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     auc,
     roc_auc_score,
-    roc_curve,  # <-- ДОБАВЛЕНО ИМПОРТ
+    roc_curve,
     confusion_matrix,
     ConfusionMatrixDisplay,
 )
@@ -18,7 +18,7 @@ import os
 
 # --- Константы и настройки ---
 # Папка для сохранения визуализаций
-ARTIFACTS_DIR = "."
+ARTIFACTS_DIR = "models/"
 PLOTS_DIR = "visualizations"
 MODEL_PATH = os.path.join(ARTIFACTS_DIR, "final_model.joblib")
 STUDY_PATH = os.path.join(ARTIFACTS_DIR, "optuna_study.joblib")
@@ -31,6 +31,9 @@ os.makedirs(PLOTS_DIR, exist_ok=True)
 sns.set_style("whitegrid")
 plt.rcParams["figure.figsize"] = (10, 6)
 plt.rcParams["font.size"] = 12
+
+# Устанавливаем бэкенд для matplotlib чтобы не открывать окна
+plt.switch_backend("Agg")
 
 
 def load_artifacts(model_path: str, study_path: str, test_data_path: str) -> dict:
@@ -75,8 +78,8 @@ def plot_feature_importance(model, feature_names):
     plt.tight_layout()
     save_path = os.path.join(PLOTS_DIR, "feature_importance.png")
     plt.savefig(save_path)
+    plt.close()  # Закрываем фигуру вместо plt.show()
     print(f"График важности признаков сохранен в {save_path}")
-    plt.show()
 
 
 def plot_roc_curve(model, X_test, y_test):
@@ -112,8 +115,8 @@ def plot_roc_curve(model, X_test, y_test):
     # Сохраняем график
     roc_path = os.path.join(PLOTS_DIR, "roc_curve.png")
     plt.savefig(roc_path, dpi=300, bbox_inches="tight")
+    plt.close()  # Закрываем фигуру вместо plt.show()
     print(f"ROC-кривая сохранена в {roc_path}")
-    plt.show()
 
     # Выводим AUC в консоль для удобства
     print(f"ROC AUC на тестовых данных: {roc_auc:.4f}")
@@ -126,8 +129,8 @@ def plot_model_performance(model, X_test, y_test):
     y_pred_proba = model.predict_proba(X_test)[:, 1]
     y_pred_class = model.predict(X_test)
 
-    # 1. ROC-кривая (ВЫЗЫВАЕМ ПЕРВОЙ, так как она показывает AUC)
-    roc_auc = plot_roc_curve(model, X_test, y_test)
+    # 1. ROC-кривая
+    plot_roc_curve(model, X_test, y_test)
 
     # 2. Кривая Точности-Полноты (Precision-Recall Curve)
     precision, recall, _ = precision_recall_curve(y_test, y_pred_proba, pos_label=1)
@@ -141,8 +144,8 @@ def plot_model_performance(model, X_test, y_test):
     plt.legend(loc="best")
     pr_curve_path = os.path.join(PLOTS_DIR, "precision_recall_curve.png")
     plt.savefig(pr_curve_path)
+    plt.close()  # Закрываем фигуру вместо plt.show()
     print(f"График PR-кривой сохранен в {pr_curve_path}")
-    plt.show()
 
     # 3. Матрица ошибок (Confusion Matrix)
     cm = confusion_matrix(y_test, y_pred_class)
@@ -153,8 +156,8 @@ def plot_model_performance(model, X_test, y_test):
     plt.title("Матрица ошибок (Confusion Matrix)")
     cm_path = os.path.join(PLOTS_DIR, "confusion_matrix.png")
     plt.savefig(cm_path)
-    print(f"Матрица ошибок сохранена в {cm_path}")
-    plt.show()
+    plt.close()  # Закрываем фигуру вместо plt.show()
+    print(f"Матрица ошибок сохранен в {cm_path}")
 
 
 if __name__ == "__main__":
