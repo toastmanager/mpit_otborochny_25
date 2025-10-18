@@ -1,5 +1,5 @@
+import os
 import pandas as pd
-import numpy as np
 from catboost import CatBoostClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score
@@ -36,6 +36,15 @@ def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
         X, y, test_size=0.20, random_state=42, stratify=y
     )
 
+    try:
+        test_model = CatBoostClassifier(task_type="GPU", devices="0", verbose=0)
+        test_model.fit(X_train.head(10), y_train.head(10), verbose=0)
+        task_type = "GPU"
+        devices = "0"
+    except Exception:
+        task_type = "CPU"
+        devices = None
+
     # 4. Подбор гиперпараметров с Optuna
     def objective(trial: optuna.Trial) -> float:
         train_x, val_x, train_y, val_y = train_test_split(
@@ -48,14 +57,18 @@ def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             "max_depth": trial.suggest_int("max_depth", 4, 9),
             "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 15.0, log=True),
-            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-            "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.6, 1.0),
+            # "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+            # "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.6, 1.0),
             "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 1, 100),
             "random_state": 42,
             "verbose": 0,
+            "task_type": task_type,
             "cat_features": categorical_features,
             "auto_class_weights": "Balanced",  # Ключевой параметр для борьбы с дисбалансом
         }
+
+        if devices:
+            params["devices"] = devices
 
         model = CatBoostClassifier(**params)
         model.fit(
@@ -87,8 +100,12 @@ def train_pipeline(df: pd.DataFrame, n_trials: int = 50) -> Dict[str, Any]:
             "cat_features": categorical_features,
             "auto_class_weights": "Balanced",
             "random_state": 42,
+            "task_type": task_type,
+            "verbose": 100,
         }
     )
+    if devices:
+        final_model_params["devices"] = devices
 
     final_model = CatBoostClassifier(**final_model_params)
     final_model.fit(X_train, y_train, verbose=100)  # Можно включить вывод для контроля
@@ -125,16 +142,18 @@ if __name__ == "__main__":
     print(f"Затрачено на обучение: {duration:.2f} сек.")
 
     # Сохранение всех артефактов
-    joblib.dump(artifacts["model"], "final_model.joblib")
-    joblib.dump(artifacts["study"], "optuna_study.joblib")
+    os.makedirs("models", exist_ok=True)
+
+    joblib.dump(artifacts["model"], "models/final_model.joblib")
+    joblib.dump(artifacts["study"], "models/optuna_study.joblib")
     joblib.dump(
-        artifacts["feature_names"], "feature_names.joblib"
+        artifacts["feature_names"], "models/feature_names.joblib"
     )  # Сохраняем признаки
 
     # Сохраняем тестовые данные для воспроизводимости оценки
     test_df = artifacts["X_test"].copy()
     test_df["is_done"] = artifacts["y_test"]
-    test_df.to_csv("test_data.csv", index=False)
+    test_df.to_csv("models/test_data.csv", index=False)
 
     print(
         "\nАртефакты (модель, исследование Optuna, имена признаков, тестовые данные) успешно сохранены."
