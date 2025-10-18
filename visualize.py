@@ -2,6 +2,7 @@ import pandas as pd
 import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np  # <-- ДОБАВЛЕН ИМПОРТ
 from sklearn.metrics import (
     precision_recall_curve,
     auc,
@@ -51,13 +52,11 @@ def load_artifacts(model_path: str, study_path: str, test_data_path: str) -> dic
 
 def plot_optuna_study(study):
     """Создает и сохраняет графики исследования Optuna."""
-    # 1. График истории оптимизации
     fig_history = plot_optimization_history(study)
     history_path = os.path.join(PLOTS_DIR, "optuna_optimization_history.png")
     fig_history.write_image(history_path)
     print(f"График истории оптимизации сохранен в {history_path}")
 
-    # 2. График важности гиперпараметров
     fig_params = plot_param_importances(study)
     params_path = os.path.join(PLOTS_DIR, "optuna_param_importances.png")
     fig_params.write_image(params_path)
@@ -78,20 +77,16 @@ def plot_feature_importance(model, feature_names):
     plt.tight_layout()
     save_path = os.path.join(PLOTS_DIR, "feature_importance.png")
     plt.savefig(save_path)
-    plt.close()  # Закрываем фигуру вместо plt.show()
+    plt.close()
     print(f"График важности признаков сохранен в {save_path}")
 
 
 def plot_roc_curve(model, X_test, y_test):
     """Создает и сохраняет ROC-кривую."""
-    # Получаем предсказания вероятностей для положительного класса
     y_pred_proba = model.predict_proba(X_test)[:, 1]
+    fpr, tpr, _ = roc_curve(y_test, y_pred_proba, pos_label=1)
+    roc_auc = auc(fpr, tpr)
 
-    # Вычисляем ROC-кривую и AUC
-    fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba, pos_label=1)
-    roc_auc = roc_auc_score(y_test, y_pred_proba)
-
-    # Строим график
     plt.figure(figsize=(10, 8))
     plt.plot(
         fpr, tpr, color="darkorange", lw=2, label=f"ROC кривая (AUC = {roc_auc:.4f})"
@@ -111,17 +106,11 @@ def plot_roc_curve(model, X_test, y_test):
     plt.title("ROC-кривая (Receiver Operating Characteristic)")
     plt.legend(loc="lower right")
     plt.grid(True, alpha=0.3)
-
-    # Сохраняем график
     roc_path = os.path.join(PLOTS_DIR, "roc_curve.png")
     plt.savefig(roc_path, dpi=300, bbox_inches="tight")
-    plt.close()  # Закрываем фигуру вместо plt.show()
+    plt.close()
     print(f"ROC-кривая сохранена в {roc_path}")
-
-    # Выводим AUC в консоль для удобства
     print(f"ROC AUC на тестовых данных: {roc_auc:.4f}")
-
-    return roc_auc
 
 
 def plot_model_performance(model, X_test, y_test):
@@ -129,13 +118,10 @@ def plot_model_performance(model, X_test, y_test):
     y_pred_proba = model.predict_proba(X_test)[:, 1]
     y_pred_class = model.predict(X_test)
 
-    # 1. ROC-кривая
     plot_roc_curve(model, X_test, y_test)
 
-    # 2. Кривая Точности-Полноты (Precision-Recall Curve)
     precision, recall, _ = precision_recall_curve(y_test, y_pred_proba, pos_label=1)
     pr_auc = auc(recall, precision)
-
     plt.figure(figsize=(10, 7))
     plt.plot(recall, precision, lw=2, label=f"PR AUC = {pr_auc:.3f}")
     plt.xlabel("Полнота (Recall)")
@@ -144,30 +130,120 @@ def plot_model_performance(model, X_test, y_test):
     plt.legend(loc="best")
     pr_curve_path = os.path.join(PLOTS_DIR, "precision_recall_curve.png")
     plt.savefig(pr_curve_path)
-    plt.close()  # Закрываем фигуру вместо plt.show()
+    plt.close()
     print(f"График PR-кривой сохранен в {pr_curve_path}")
 
-    # 3. Матрица ошибок (Confusion Matrix)
     cm = confusion_matrix(y_test, y_pred_class)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-
     fig, ax = plt.subplots(figsize=(8, 8))
     disp.plot(ax=ax, cmap="Blues")
     plt.title("Матрица ошибок (Confusion Matrix)")
     cm_path = os.path.join(PLOTS_DIR, "confusion_matrix.png")
     plt.savefig(cm_path)
-    plt.close()  # Закрываем фигуру вместо plt.show()
-    print(f"Матрица ошибок сохранен в {cm_path}")
+    plt.close()
+    print(f"Матрица ошибок сохранена в {cm_path}")
+
+
+def plot_error_analysis(model, X_test, y_test, top_n_features=3):
+    """
+    Создает и сохраняет графики для анализа ошибок модели.
+    """
+    print("\n--- Начало анализа ошибок модели ---")
+
+    y_pred_class = model.predict(X_test)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+    analysis_df = X_test.copy()
+    analysis_df["true_label"] = y_test
+    analysis_df["predicted_label"] = y_pred_class
+    analysis_df["predicted_proba"] = y_pred_proba
+
+    conditions = [
+        (analysis_df["true_label"] == 0) & (analysis_df["predicted_label"] == 1),
+        (analysis_df["true_label"] == 1) & (analysis_df["predicted_label"] == 0),
+        (analysis_df["true_label"] == 1) & (analysis_df["predicted_label"] == 1),
+        (analysis_df["true_label"] == 0) & (analysis_df["predicted_label"] == 0),
+    ]
+    outcomes = ["False Positive", "False Negative", "True Positive", "True Negative"]
+    analysis_df["outcome"] = pd.Series(
+        np.select(conditions, outcomes, default="Other"), index=analysis_df.index
+    )
+
+    plt.figure(figsize=(12, 7))
+    sns.histplot(
+        data=analysis_df,
+        x="predicted_proba",
+        hue="true_label",
+        multiple="layer",
+        bins=50,
+        palette=["#4c72b0", "#dd8452"],
+    )
+    plt.title("Распределение предсказанных вероятностей для каждого класса")
+    plt.xlabel("Предсказанная вероятность положительного класса")
+    plt.ylabel("Количество")
+    prob_path = os.path.join(PLOTS_DIR, "error_analysis_probabilities.png")
+    plt.savefig(prob_path)
+    plt.close()
+    print(f"График распределения вероятностей сохранен в {prob_path}")
+
+    importances = pd.DataFrame(
+        {
+            "feature": X_test.columns.tolist(),
+            "importance": model.get_feature_importance(),
+        }
+    ).sort_values("importance", ascending=False)
+
+    top_features = importances["feature"].head(top_n_features).tolist()
+
+    for feature in top_features:
+        plt.figure(figsize=(12, 7))
+
+        is_numeric = pd.api.types.is_numeric_dtype(analysis_df[feature])
+        treat_as_categorical = analysis_df[feature].nunique() < 25
+
+        palette = {
+            "False Positive": "#d62728",
+            "False Negative": "#ff7f0e",
+            "True Positive": "#2ca02c",
+            "True Negative": "#1f77b4",
+        }
+
+        # Если признак числовой и непрерывный -> kdeplot
+        if is_numeric and not treat_as_categorical:
+            sns.kdeplot(
+                data=analysis_df,
+                x=feature,
+                hue="outcome",
+                fill=True,
+                common_norm=False,
+                palette=palette,
+            )
+            plt.title(f"Распределение плотности вероятности для признака: {feature}")
+            # Строка ниже УДАЛЕНА, так как Seaborn создает легенду автоматически
+            # plt.legend(title='Outcome')
+        # Иначе (категориальный или дискретный числовой) -> countplot
+        else:
+            order = sorted(analysis_df[feature].unique()) if is_numeric else None
+            sns.countplot(
+                data=analysis_df, x=feature, hue="outcome", order=order, palette=palette
+            )
+            plt.title(f"Распределение ошибок по признаку: {feature}")
+            if analysis_df[feature].dtype == "object":
+                plt.xticks(rotation=45, ha="right")
+
+        plt.tight_layout()
+        save_path = os.path.join(PLOTS_DIR, f"error_analysis_{feature}.png")
+        plt.savefig(save_path)
+        plt.close()
+        print(f"График анализа ошибок для '{feature}' сохранен в {save_path}")
 
 
 if __name__ == "__main__":
-    # Загружаем артефакты
     artifacts = load_artifacts(MODEL_PATH, STUDY_PATH, TEST_DATA_PATH)
     model = artifacts["model"]
     study = artifacts["study"]
     test_df = artifacts["test_df"]
 
-    # Готовим тестовые данные
     X_test = test_df.drop(columns=["is_done"])
     y_test = test_df["is_done"]
 
@@ -179,5 +255,7 @@ if __name__ == "__main__":
 
     print("\n--- Создание визуализаций для оценки качества модели ---")
     plot_model_performance(model, X_test, y_test)
+
+    plot_error_analysis(model, X_test, y_test, top_n_features=3)
 
     print(f"\nВсе визуализации сохранены в папку '{PLOTS_DIR}'.")
