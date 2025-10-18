@@ -40,11 +40,6 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
 
         # Удаляем вспомогательную колонку, она больше не нужна
         df.drop(columns=["order_was_completed"], inplace=True)
-
-        outcompeted_count = df["is_outcompeted"].sum()
-        print(
-            f"Identified {outcompeted_count} instances of being outcompeted by another driver."
-        )
     else:
         print(
             "Warning: 'order_id' column not found. Cannot create 'is_outcompeted' feature."
@@ -97,6 +92,13 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     if "distance_in_meters" in df.columns:
         df["distance_in_meters_log"] = np.log1p(df["distance_in_meters"])
 
+    df["is_weekend"] = df["order_dayofweek"].isin([5, 6]).astype(int)
+
+    df["is_rush_hour"] = (
+        ((df["order_hour"] >= 7) & (df["order_hour"] <= 10))
+        | ((df["order_hour"] >= 17) & (df["order_hour"] <= 20))
+    ).astype(int)
+
     df.drop(
         columns=["order_datetime", "driver_reg_datetime"],
         inplace=True,
@@ -116,6 +118,7 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
         "driver_id",
         "carmodel",
         "carname",
+        "is_outcompleted",
     ]
     df.drop(columns=[col for col in cols_to_drop if col in df.columns], inplace=True)
     return df
@@ -123,42 +126,28 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
 
 def handle_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     """Handles anomalies and outliers in the data."""
-    initial_rows = len(df)
+    # initial_rows = len(df)
 
     # Remove rows with negative driver experience days
     df = df[df["driver_experience_days"] >= 0]
-    rows_removed = initial_rows - len(df)
-    if rows_removed > 0:
-        print(f"Removed {rows_removed} rows with negative driver experience.")
+    # rows_removed = initial_rows - len(df)
+    # if rows_removed > 0:
+    #     print(f"Removed {rows_removed} rows with negative driver experience.")
 
     # Remove trips with unrealistically short distance and duration
-    initial_rows_after_exp_filter = len(df)
+    # initial_rows_after_exp_filter = len(df)
     df = df[~((df["distance_in_meters"] < 10) & (df["duration_in_seconds"] < 10))]
-    rows_removed_short = initial_rows_after_exp_filter - len(df)
-    if rows_removed_short > 0:
-        print(f"Removed {rows_removed_short} rows with anomalous short trip data.")
+    # rows_removed_short = initial_rows_after_exp_filter - len(df)
+    # if rows_removed_short > 0:
+    #     print(f"Removed {rows_removed_short} rows with anomalous short trip data.")
 
     return df
 
 
-def preprocess_data(file_path: str) -> pd.DataFrame:
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Main function to load and preprocess the data.
     """
-    try:
-        df = pd.read_csv(file_path, sep=",", encoding="utf-8")
-    except FileNotFoundError as e:
-        print(f"Error: file {file_path} not found.")
-        raise e
-    except Exception as e:
-        print(f"An error occurred while reading the file: {e}")
-        # Fallback to latin1 if utf-8 fails
-        try:
-            print("Attempting to read with 'latin1' encoding.")
-            df = pd.read_csv(file_path, sep=",", encoding="latin1")
-        except Exception as e_inner:
-            print(f"Failed to read with 'latin1' as well: {e_inner}")
-            raise e_inner
 
     if "Unnamed: 18" in df.columns:
         df.drop("Unnamed: 18", axis=1, inplace=True)
@@ -172,7 +161,22 @@ def preprocess_data(file_path: str) -> pd.DataFrame:
 
 if __name__ == "__main__":
     try:
-        processed_df = preprocess_data("train.csv")
+        file_path = "train.csv"
+        try:
+            df = pd.read_csv(file_path, sep=",", encoding="utf-8")
+        except FileNotFoundError as e:
+            print(f"Error: file {file_path} not found.")
+            raise e
+        except Exception as e:
+            print(f"An error occurred while reading the file: {e}")
+            # Fallback to latin1 if utf-8 fails
+            try:
+                print("Attempting to read with 'latin1' encoding.")
+                df = pd.read_csv(file_path, sep=",", encoding="latin1")
+            except Exception as e_inner:
+                print(f"Failed to read with 'latin1' as well: {e_inner}")
+                raise e_inner
+        processed_df = preprocess_data(df)
         save_data(processed_df, "data_processed.csv")
         print("\nPreprocessing complete. Data saved to data_processed.csv")
         print("\nExample of cleaned data:")

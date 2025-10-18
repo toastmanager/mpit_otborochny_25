@@ -94,7 +94,7 @@ def train_pipeline(
                 "verbose": 0,
                 "task_type": task_type,
                 "cat_features": categorical_features,
-                "auto_class_weights": "Balanced",
+                "scale_pos_weight": 1.25,
             }
             if devices:
                 params["devices"] = devices
@@ -111,10 +111,10 @@ def train_pipeline(
             preds_proba = model.predict_proba(val_x)[:, 1]
 
             # Вычисляем ROC-AUC вместо F1-score
-            roc_auc = float(roc_auc_score(val_y, preds_proba))
+            f1 = float(roc_auc_score(val_y, preds_proba))
 
             trial.set_user_attr("best_iteration", model.get_best_iteration())
-            return roc_auc
+            return f1
 
         study = optuna.create_study(
             direction="maximize", study_name="catboost_f1_optimization"
@@ -130,7 +130,7 @@ def train_pipeline(
         {
             "n_estimators": best_iteration,
             "cat_features": categorical_features,
-            "auto_class_weights": "Balanced",
+            "scale_pos_weight": 1.25,
             "random_state": 42,
             "task_type": task_type,
             "verbose": 100,
