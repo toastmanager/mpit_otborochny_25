@@ -61,7 +61,7 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         df["distance_in_meters_log"] = np.log1p(df["distance_in_meters"])
 
     df.drop(
-        columns=["order_datetime", "driver_reg_datetime", "distance_in_meters"],
+        columns=["order_datetime", "driver_reg_datetime"],
         inplace=True,
     )
     return df
