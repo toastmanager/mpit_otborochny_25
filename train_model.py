@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
+from sklearn.metrics import roc_auc_score
 import joblib
 import optuna
 import time
@@ -15,7 +15,7 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 # --- Контрольные параметры ---
 # Поставьте True, чтобы загрузить существующее исследование и пропустить оптимизацию.
 # Поставьте False, чтобы запустить новый подбор гиперпараметров.
-USE_EXISTING_STUDY = False
+USE_EXISTING_STUDY = True
 STUDY_PATH = "models/optuna_study.joblib"
 # --------------------------------
 
@@ -54,9 +54,10 @@ def train_pipeline(
         task_type = "GPU"
         devices = "0"
         print("Используется GPU")
-    except Exception:
+    except Exception as e:
         task_type = "CPU"
         devices = None
+        print(e)
         print("Используется СPU")
 
     ### ИЗМЕНЕНИЕ 3: Основной блок логики для переключения режимов ###
@@ -103,10 +104,15 @@ def train_pipeline(
                 early_stopping_rounds=70,
                 verbose=0,
             )
-            preds = model.predict(val_x)
-            f1 = float(f1_score(val_y, preds, pos_label=1))
+
+            # Получаем вероятности вместо предсказанных классов
+            preds_proba = model.predict_proba(val_x)[:, 1]
+
+            # Вычисляем ROC-AUC вместо F1-score
+            roc_auc = float(roc_auc_score(val_y, preds_proba))
+
             trial.set_user_attr("best_iteration", model.get_best_iteration())
-            return f1
+            return roc_auc
 
         study = optuna.create_study(
             direction="maximize", study_name="catboost_f1_optimization"

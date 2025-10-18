@@ -2,11 +2,10 @@ import pandas as pd
 import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np  # <-- ДОБАВЛЕН ИМПОРТ
+import numpy as np
 from sklearn.metrics import (
     precision_recall_curve,
     auc,
-    roc_auc_score,
     roc_curve,
     confusion_matrix,
     ConfusionMatrixDisplay,

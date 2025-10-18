@@ -52,7 +52,8 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         # Создаем колонку с нулями, чтобы не ломать дальнейший код
         df["is_outcompeted"] = 0
 
-    # --- КОНЕЦ БЛОКА ДЛЯ ВСТАВКИ ---
+    df = df[df["is_outcompeted"] == 0]
+    df.drop(columns=["is_outcompeted"], inplace=True)
 
     # Convert timestamp to datetime and extract time-based features
     df["order_datetime"] = pd.to_datetime(df["order_timestamp"], errors="coerce")
