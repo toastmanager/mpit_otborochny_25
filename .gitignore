@@ -1,4 +1,9 @@
+visualizations/
 catboost_info
 catboost_predictor.joblib
 data_processed.csv
 train.csv
+final_model.joblib
+feature_names.joblib
+optuna_study.joblib
+test_data.csv
