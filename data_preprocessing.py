@@ -17,11 +17,57 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     if df["is_done"].dtype == "object":
         df["is_done"] = df["is_done"].str.strip().map({"done": 1, "cancel": 0})
 
+    # Шаг 1: Для каждого order_id определяем, был ли он в итоге выполнен кем-либо.
+    # Используем .transform('any'), чтобы результат этого вычисления (True/False)
+    # был применен ко всем строкам, относящимся к одному и тому же order_id.
+    if "order_id" in df.columns:
+        df["order_was_completed"] = df.groupby("order_id")["is_done"].transform("any")
+
+        # Шаг 2: Определяем условия, когда предложение было "перебито" конкурентом.
+        # Условие A: Цена предложения была не выше начальной (хорошее предложение)
+        good_price_condition = df["price_bid_local"] <= df["price_start_local"]
+
+        # Условие B: Конкретно это предложение было отклонено (is_done == 0)
+        cancelled_condition = df["is_done"] == 0
+
+        # Условие C: Но сам заказ в итоге был выполнен (другим водителем)
+        completed_order_condition = df["order_was_completed"] == 1
+
+        # Комбинируем все три условия. Результат (True/False) преобразуем в 1/0.
+        df["is_outcompeted"] = (
+            good_price_condition & cancelled_condition & completed_order_condition
+        ).astype(int)
+
+        # Удаляем вспомогательную колонку, она больше не нужна
+        df.drop(columns=["order_was_completed"], inplace=True)
+    else:
+        print(
+            "Warning: 'order_id' column not found. Cannot create 'is_outcompeted' feature."
+        )
+        # Создаем колонку с нулями, чтобы не ломать дальнейший код
+        df["is_outcompeted"] = 0
+
+    df = df[df["is_outcompeted"] == 0].copy()
+
     # Convert timestamp to datetime and extract time-based features
     df["order_datetime"] = pd.to_datetime(df["order_timestamp"], errors="coerce")
     df["order_hour"] = df["order_datetime"].dt.hour
     df["order_dayofweek"] = df["order_datetime"].dt.dayofweek
-    df["is_night"] = df["order_hour"].apply(lambda x: 1 if 0 <= x < 6 else 0)
+    # df["is_night"] = df["order_hour"].apply(lambda x: 1 if 0 <= x < 6 else 0)
+
+    categorical_features = [
+        "carname",
+        "carmodel",
+        "platform",
+        "order_hour",
+        "order_dayofweek",
+    ]
+
+    for col in categorical_features:
+        if col in df.columns:
+            # Просто приводим к строке. Обработку редких категорий оставим в train.py,
+            # чтобы не усложнять. Для предсказания это не так критично.
+            df[col] = df[col].astype(str)
 
     # Calculate price metrics, handling division by zero
     df["price_per_meter"] = np.where(
@@ -60,8 +106,15 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     if "distance_in_meters" in df.columns:
         df["distance_in_meters_log"] = np.log1p(df["distance_in_meters"])
 
+    # df["is_weekend"] = df["order_dayofweek"].isin([5, 6]).astype(int)
+
+    # df["is_rush_hour"] = (
+    #     ((df["order_hour"] >= 7) & (df["order_hour"] <= 10))
+    #     | ((df["order_hour"] >= 17) & (df["order_hour"] <= 20))
+    # ).astype(int)
+
     df.drop(
-        columns=["order_datetime", "driver_reg_datetime", "distance_in_meters"],
+        columns=["order_datetime", "driver_reg_datetime"],
         inplace=True,
     )
     return df
@@ -77,6 +130,7 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
         "order_timestamp",
         "driver_reg_date",
         "driver_id",
+        "is_outcompeted",
     ]
     df.drop(columns=[col for col in cols_to_drop if col in df.columns], inplace=True)
     return df
@@ -84,45 +138,20 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
 
 def handle_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     """Handles anomalies and outliers in the data."""
-    initial_rows = len(df)
 
-    # Remove rows with negative driver experience days
-    df = df[df["driver_experience_days"] >= 0]
-    rows_removed = initial_rows - len(df)
-    if rows_removed > 0:
-        print(f"Removed {rows_removed} rows with negative driver experience.")
-
-    # Remove trips with unrealistically short distance and duration
-    initial_rows_after_exp_filter = len(df)
-    df = df[~((df["distance_in_meters"] < 10) & (df["duration_in_seconds"] < 10))]
-    rows_removed_short = initial_rows_after_exp_filter - len(df)
-    if rows_removed_short > 0:
-        print(f"Removed {rows_removed_short} rows with anomalous short trip data.")
+    df["driver_experience_days"] = df["driver_experience_days"].abs()
 
     return df
 
 
-def preprocess_data(file_path: str) -> pd.DataFrame:
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Main function to load and preprocess the data.
     """
-    try:
-        df = pd.read_csv(file_path, sep=",", encoding="utf-8")
-    except FileNotFoundError as e:
-        print(f"Error: file {file_path} not found.")
-        raise e
-    except Exception as e:
-        print(f"An error occurred while reading the file: {e}")
-        # Fallback to latin1 if utf-8 fails
-        try:
-            print("Attempting to read with 'latin1' encoding.")
-            df = pd.read_csv(file_path, sep=",", encoding="latin1")
-        except Exception as e_inner:
-            print(f"Failed to read with 'latin1' as well: {e_inner}")
-            raise e_inner
 
-    if "Unnamed: 18" in df.columns:
-        df.drop("Unnamed: 18", axis=1, inplace=True)
+    for col in df.columns:
+        if col.startswith("Unnamed"):
+            df.drop(col, axis=1, inplace=True)
 
     df = feature_engineering(df)
     df = remove_leaky_attributes(df)
@@ -133,7 +162,22 @@ def preprocess_data(file_path: str) -> pd.DataFrame:
 
 if __name__ == "__main__":
     try:
-        processed_df = preprocess_data("train.csv")
+        file_path = "train.csv"
+        try:
+            df = pd.read_csv(file_path, sep=",", encoding="utf-8")
+        except FileNotFoundError as e:
+            print(f"Error: file {file_path} not found.")
+            raise e
+        except Exception as e:
+            print(f"An error occurred while reading the file: {e}")
+            # Fallback to latin1 if utf-8 fails
+            try:
+                print("Attempting to read with 'latin1' encoding.")
+                df = pd.read_csv(file_path, sep=",", encoding="latin1")
+            except Exception as e_inner:
+                print(f"Failed to read with 'latin1' as well: {e_inner}")
+                raise e_inner
+        processed_df = preprocess_data(df)
         save_data(processed_df, "data_processed.csv")
         print("\nPreprocessing complete. Data saved to data_processed.csv")
         print("\nExample of cleaned data:")

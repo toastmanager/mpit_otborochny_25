@@ -1,4 +1,6 @@
 visualizations/
+models/
+__pycache__/
 catboost_info
 catboost_predictor.joblib
 data_processed.csv
@@ -7,3 +9,4 @@ final_model.joblib
 feature_names.joblib
 optuna_study.joblib
 test_data.csv
+test.csv
