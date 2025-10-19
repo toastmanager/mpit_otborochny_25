@@ -16,8 +16,6 @@
 <img width="600" height="400" alt="feature_importance" src="https://github.com/user-attachments/assets/4143fe75-9be4-4f5f-a2c0-f8af8aeaa644" />
 <img width="1291" height="1058" alt="roc_curve" src="https://github.com/user-attachments/assets/32bac403-4ba4-4137-8568-c395d5aa3feb" />
 
-
-
 ## Технологии
 
 - Python - язык
@@ -48,6 +46,12 @@ venv/Scripts/activate
 
 ```
 pip install -r requirements.txt
+```
+
+Если у вас возникают проблемы на этом шаге, попробуйте воспользоваться `conda`
+
+```
+conda env create -f environment.yml
 ```
 
 ## Обучение модели
