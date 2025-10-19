@@ -1,3 +1,7 @@
+# МПИТ 2025 - Команда "Абзац"
+
+<img width="960" height="540" alt="Frame 5" src="https://github.com/user-attachments/assets/dac504e9-98f9-43b5-9aee-58abb9df49b0" />
+
 Это "библиотека" для прогнозирования оптимальной цены бида, созданная в рамках стартового онлайн-хакатона "Моя Профессия - ИТ".
 
 На `2025.10.19` модель прогнозирует выбор пассажира с точностью в 74% (ROC AUC = 0.7418)
@@ -5,6 +9,14 @@
 В папке `analytics` есть скрипты, которые подготовят для вас интересные графики и диаграммы по датасету.
 
 Чтобы начать использовать проект или внедрить его в свой продукт, следуйте инструкциям представленным ниже
+
+## Графики и диаграммы
+
+<img width="400" height="400" alt="confusion_matrix" src="https://github.com/user-attachments/assets/f8c09c52-0e47-4aa0-83e6-c94f7cddc1a7" />
+<img width="600" height="400" alt="feature_importance" src="https://github.com/user-attachments/assets/4143fe75-9be4-4f5f-a2c0-f8af8aeaa644" />
+<img width="1291" height="1058" alt="roc_curve" src="https://github.com/user-attachments/assets/32bac403-4ba4-4137-8568-c395d5aa3feb" />
+
+
 
 ## Технологии
 
