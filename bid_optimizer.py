@@ -11,15 +11,10 @@ DRIVER_TAX_RATE = 0.05
 class BidOptimizer:
     """
     Класс для расчета оптимального бида с использованием обученной ML-модели.
+    ОПТИМИЗИРОВАННАЯ ВЕРСИЯ.
     """
 
     def __init__(self, model_path: str, features_path: str):
-        """
-        Инициализация класса, загрузка модели и списка признаков.
-
-        :param model_path: Путь к файлу с обученной моделью (.joblib).
-        :param features_path: Путь к файлу со списком названий признаков (.joblib).
-        """
         try:
             self.model = joblib.load(model_path)
             self.feature_names = joblib.load(features_path)
@@ -38,75 +33,69 @@ class BidOptimizer:
         bid_step: int = 10,
     ) -> Dict[str, Any]:
         """
-        Рассчитывает оптимальный бид путем итеративного перебора цен
-        и максимизации ожидаемой прибыли сервиса.
-
-        :param initial_features: Словарь с признаками поездки (без цены).
-        :param initial_bid: Начальная цена, предложенная системой (например, на основе расстояния).
-        :param bid_range: Диапазон для поиска вокруг начальной цены (в рублях).
-        :param bid_step: Шаг изменения цены при поиске.
-        :return: Словарь с результатами расчета.
+        Рассчитывает оптимальный бид путем векторной обработки всех возможных цен,
+        что значительно быстрее, чем итеративный перебор.
         """
+        # 1. Создаем массив всех возможных бидов
         bids = np.arange(
-            max(initial_bid - bid_range, bid_step),  # Не даем цене упасть до нуля
+            max(initial_bid - bid_range, bid_step),
             initial_bid + bid_range + bid_step,
             bid_step,
         )
-
-        results = []
-
-        for bid in bids:
-            # 1. Рассчитываем финансовые показатели для текущего бида
-            driver_income_before_tax = bid * (1 - SERVICE_COMMISSION_RATE)
-            driver_tax = driver_income_before_tax * DRIVER_TAX_RATE
-            driver_net_income = driver_income_before_tax - driver_tax
-            service_profit = bid * SERVICE_COMMISSION_RATE
-
-            # 2. Формируем вектор признаков для модели
-            # Важно: В модели может быть признак, отвечающий за цену.
-            # Предположим, он называется 'bid' или 'price'. Здесь мы его устанавливаем.
-            current_features = initial_features.copy()
-            current_features["price_bid_local"] = (
-                bid  # Убедитесь, что 'bid' - это правильное имя признака
-            )
-            df_for_prediction = preprocess_data(
-                pd.DataFrame(current_features, index=[1]),
-            )
-
-            # Создаем DataFrame с правильным порядком колонок
-            # df_for_prediction = pd.DataFrame(
-            #     [current_features], columns=self.feature_names
-            # )
-
-            # 3. Получаем вероятность согласия от модели
-            try:
-                # predict_proba возвращает вероятности для каждого класса, нам нужен класс "1" (согласие)
-                probability_of_success = self.model.predict_proba(df_for_prediction)[
-                    0, 1
-                ]
-            except Exception as e:
-                print(f"Ошибка при предсказании для бида {bid}: {e}")
-                continue
-
-            # 4. Рассчитываем ожидаемую прибыль
-            expected_profit = probability_of_success * service_profit
-
-            results.append(
-                {
-                    "bid": bid,
-                    "probability_of_success": probability_of_success,
-                    "service_profit": service_profit,
-                    "expected_profit": expected_profit,
-                    "driver_net_income": driver_net_income,
-                }
-            )
-
-        if not results:
-            print("Не удалось получить ни одного результата. Проверьте входные данные.")
+        num_bids = len(bids)
+        if num_bids == 0:
             return {}
 
-        # 5. Находим лучший бид, который максимизирует ожидаемую прибыль
-        best_result = max(results, key=lambda x: x["expected_profit"])
+        # 2. Создаем "батч" DataFrame: дублируем исходные признаки N раз,
+        # где N - количество проверяемых бидов.
+        features_df = pd.DataFrame([initial_features] * num_bids)
+        features_df["price_bid_local"] = bids  # Заменяем цену на массив бидов
+
+        # 3. Вызываем предобработку ОДИН РАЗ для всего батча
+        preprocessed_df = preprocess_data(features_df)
+
+        # 4. Принудительно приводим типы и порядок колонок (как в предыдущем исправлении)
+        categorical_cols = ["platform", "order_hour", "order_dayofweek"]
+        for col in categorical_cols:
+            if col in preprocessed_df.columns:
+                preprocessed_df[col] = preprocessed_df[col].astype(str)
+
+        try:
+            preprocessed_df = preprocessed_df[self.feature_names]
+        except KeyError as e:
+            print(f"Ошибка согласования колонок: {e}")
+            return {}
+
+        # 5. Вызываем предсказание ОДИН РАЗ и сразу получаем все вероятности
+        # probabilities[:, 1] - берем вероятности для класса '1' (успех)
+        try:
+            probabilities = self.model.predict_proba(preprocessed_df)[:, 1]
+        except Exception as e:
+            print(f"Ошибка при пакетном предсказании: {e}")
+            return {}
+
+        # 6. Выполняем финансовые расчеты с помощью быстрых операций numpy
+        service_profits = bids * SERVICE_COMMISSION_RATE
+        expected_profits = probabilities * service_profits
+
+        # 7. Находим индекс бида с максимальной ожидаемой прибылью
+        best_idx = np.argmax(expected_profits)
+
+        # 8. Собираем и возвращаем лучший результат
+        best_bid = bids[best_idx]
+        best_probability = probabilities[best_idx]
+        best_expected_profit = expected_profits[best_idx]
+
+        driver_income = best_bid * (1 - SERVICE_COMMISSION_RATE)
+        driver_net_income = driver_income * (1 - DRIVER_TAX_RATE)
+
+        best_result = {
+            "bid": best_bid,
+            "probability_of_success": best_probability,
+            "service_profit": service_profits[best_idx],
+            "expected_profit": best_expected_profit,
+            "driver_net_income": driver_net_income,
+        }
 
         return best_result
 

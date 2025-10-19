@@ -47,13 +47,27 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         # Создаем колонку с нулями, чтобы не ломать дальнейший код
         df["is_outcompeted"] = 0
 
-    df = df[df["is_outcompeted"] == 0]
+    df = df[df["is_outcompeted"] == 0].copy()
 
     # Convert timestamp to datetime and extract time-based features
     df["order_datetime"] = pd.to_datetime(df["order_timestamp"], errors="coerce")
     df["order_hour"] = df["order_datetime"].dt.hour
     df["order_dayofweek"] = df["order_datetime"].dt.dayofweek
-    df["is_night"] = df["order_hour"].apply(lambda x: 1 if 0 <= x < 6 else 0)
+    # df["is_night"] = df["order_hour"].apply(lambda x: 1 if 0 <= x < 6 else 0)
+
+    categorical_features = [
+        "carname",
+        "carmodel",
+        "platform",
+        "order_hour",
+        "order_dayofweek",
+    ]
+
+    for col in categorical_features:
+        if col in df.columns:
+            # Просто приводим к строке. Обработку редких категорий оставим в train.py,
+            # чтобы не усложнять. Для предсказания это не так критично.
+            df[col] = df[col].astype(str)
 
     # Calculate price metrics, handling division by zero
     df["price_per_meter"] = np.where(
@@ -92,12 +106,12 @@ def feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
     if "distance_in_meters" in df.columns:
         df["distance_in_meters_log"] = np.log1p(df["distance_in_meters"])
 
-    df["is_weekend"] = df["order_dayofweek"].isin([5, 6]).astype(int)
+    # df["is_weekend"] = df["order_dayofweek"].isin([5, 6]).astype(int)
 
-    df["is_rush_hour"] = (
-        ((df["order_hour"] >= 7) & (df["order_hour"] <= 10))
-        | ((df["order_hour"] >= 17) & (df["order_hour"] <= 20))
-    ).astype(int)
+    # df["is_rush_hour"] = (
+    #     ((df["order_hour"] >= 7) & (df["order_hour"] <= 10))
+    #     | ((df["order_hour"] >= 17) & (df["order_hour"] <= 20))
+    # ).astype(int)
 
     df.drop(
         columns=["order_datetime", "driver_reg_datetime"],
@@ -116,9 +130,7 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
         "order_timestamp",
         "driver_reg_date",
         "driver_id",
-        "carmodel",
-        "carname",
-        "is_outcompleted",
+        "is_outcompeted",
     ]
     df.drop(columns=[col for col in cols_to_drop if col in df.columns], inplace=True)
     return df
@@ -126,20 +138,8 @@ def remove_leaky_attributes(df: pd.DataFrame) -> pd.DataFrame:
 
 def handle_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     """Handles anomalies and outliers in the data."""
-    # initial_rows = len(df)
 
-    # Remove rows with negative driver experience days
-    df = df[df["driver_experience_days"] >= 0]
-    # rows_removed = initial_rows - len(df)
-    # if rows_removed > 0:
-    #     print(f"Removed {rows_removed} rows with negative driver experience.")
-
-    # Remove trips with unrealistically short distance and duration
-    # initial_rows_after_exp_filter = len(df)
-    df = df[~((df["distance_in_meters"] < 10) & (df["duration_in_seconds"] < 10))]
-    # rows_removed_short = initial_rows_after_exp_filter - len(df)
-    # if rows_removed_short > 0:
-    #     print(f"Removed {rows_removed_short} rows with anomalous short trip data.")
+    df["driver_experience_days"] = df["driver_experience_days"].abs()
 
     return df
 
@@ -149,8 +149,9 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     Main function to load and preprocess the data.
     """
 
-    if "Unnamed: 18" in df.columns:
-        df.drop("Unnamed: 18", axis=1, inplace=True)
+    for col in df.columns:
+        if col.startswith("Unnamed"):
+            df.drop(col, axis=1, inplace=True)
 
     df = feature_engineering(df)
     df = remove_leaky_attributes(df)

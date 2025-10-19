@@ -31,9 +31,15 @@ def train_pipeline(
     Организует полный пайплайн: инжиниринг признаков, подбор гиперпараметров,
     обучение и оценка модели.
     """
-    # ... (код подготовки данных остается без изменений)
+
     columns_to_drop = ["is_done"]
-    categorical_features = ["platform"]
+    categorical_features = [
+        "carname",
+        "carmodel",
+        "platform",
+        "order_hour",
+        "order_dayofweek",
+    ]
 
     X = df.drop(columns=columns_to_drop, errors="ignore")
     y = df["is_done"]
